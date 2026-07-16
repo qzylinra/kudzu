@@ -3,9 +3,11 @@
 final: prev: {
   nix = inputs.nix.packages."${prev.stdenv.hostPlatform.system}".default;
   fast-nix-gc = prev.callPackage ./fast-nix-gc.nix { };
-  opencode-wrapper = prev.callPackage ./opencode-wrapper.nix { };
+  pi-agent-mcp = prev.callPackage ./pi-agent-mcp.nix { };
+  pi-agent-settings = prev.callPackage ./pi-agent-settings.nix { };
+  pi-with-config = prev.callPackage ./pi-with-config.nix { };
   opencode-bin = prev.callPackage ./opencode-bin.nix { };
-  opencode-config = prev.callPackage ./opencode-config.nix { };
+  opencode-with-config = prev.callPackage ./opencode-with-config.nix { };
   opencode = prev.opencode.overrideAttrs (oldAttrs: {
     installPhase =
       prev.lib.replaceStrings
