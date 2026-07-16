@@ -512,7 +512,7 @@
       };
     };
     opencode = {
-      enable = true;
+      enable = false;
       package = pkgs.opencode-bin;
       settings = {
         autoshare = false;

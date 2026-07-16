@@ -47,17 +47,15 @@ jobs:
             ~/.config/opencode
             ~/.local/share/opencode
             ~/.local/share/cortexkit/magic-context
-            ~/.pi/agent/sessions
           key: paseo-state-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
           restore-keys: |
             paseo-state-${{ runner.os }}-${{ runner.arch }}-
       - run: |
           rm --force "$HOME/.config/nix/nix.conf"
-          mkdir --parents "$HOME/.paseo" "$HOME/.config/opencode" "$HOME/.local/share/opencode/skills" "$HOME/.local/share/cortexkit/magic-context" "$HOME/.pi/agent/sessions" "$HOME/.pi/agent/skills" "$HOME/.config/opencode/commands"
-          nix profile add nixpkgs#bun nixpkgs#uv nixpkgs#openspec .#opencode-with-config .#pi-with-config
-          cp .github/magic-context.jsonc ~/.config/opencode/magic-context.jsonc
-          nix build --verbose --print-build-logs --print-out-paths --impure .#pi-agent-settings --out-link /tmp/pi-agent-settings && install -D --mode 0644 /tmp/pi-agent-settings ~/.pi/agent/settings.json && rm --force /tmp/pi-agent-settings
-          nix build --verbose --print-build-logs --print-out-paths --impure .#pi-agent-mcp --out-link /tmp/pi-agent-mcp && install -D --mode 0644 /tmp/pi-agent-mcp ~/.config/mcp/mcp.json && rm --force /tmp/pi-agent-mcp
+          mkdir --parents "$HOME/.paseo" "$HOME/.config/opencode" "$HOME/.local/share/opencode/skills" "$HOME/.local/share/cortexkit/magic-context" "$HOME/.config/cortexkit" "$HOME/.config/opencode/commands"
+          nix profile add nixpkgs#bun nixpkgs#uv nixpkgs#openspec .#opencode-wrapper
+          cp .github/magic-context.jsonc ~/.config/cortexkit/magic-context.jsonc
+          nix build --verbose --print-build-logs --print-out-paths --impure .#opencode-config --out-link /tmp/opencode-config && install -D --mode 0644 /tmp/opencode-config ~/.config/opencode/opencode.json && rm --force /tmp/opencode-config
           npm install --global --yes @getpaseo/cli
       - run: |
           npx skills@latest add mattpocock/skills --agent opencode -g -y
@@ -67,14 +65,16 @@ jobs:
           git clone --depth 1 --single-branch https://github.com/PabloNAX/ultracode-skill.git /tmp/ultracode-skill && cp --recursive /tmp/ultracode-skill/ultracode ~/.config/opencode/skills/ && rm --recursive --force /tmp/ultracode-skill
           mkdir --parents "${HOME}/.config/opencode/skills/ultra-goal" && curl --location "https://raw.githubusercontent.com/Azure99/ultra-goal/main/skills/ultra-goal/SKILL.md" --output "${HOME}/.config/opencode/skills/ultra-goal/SKILL.md"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
-          npm install -g open-websearch
-          ln --symbolic ~/.config/opencode/skills/* ~/.pi/agent/skills/
-          mkdir --parents "${HOME}/.pi/agent/git/github.com/ravshansbox" && git clone --depth 1 --single-branch https://github.com/ravshansbox/pi-opencode-zen.git ~/.pi/agent/git/github.com/ravshansbox/pi-opencode-zen && pushd ~/.pi/agent/git/github.com/ravshansbox/pi-opencode-zen && npm install --yes && popd
-          # git -C "$HOME/.pi/agent/git/github.com/ravshansbox/pi-opencode-zen" apply "$(realpath .github/pi-opencode-zen.patch)"
-          export PATH="$HOME/.pi/agent/npm/node_modules/@hypabolic/hypa-linux-x64/bin:$PATH"
-          bunx oh-my-opencode-slim@latest install --no-tui --skills=yes --preset=opencode-go --companion=no --background-subagents=no --reset
-          python3 -m pip install --user json5
-          mkdir --parents "$HOME/.config/opencode" && python3 -c 'import os,re,json,urllib.request; import json5; u="https://raw.githubusercontent.com/alvinunreal/oh-my-opencode-slim/refs/heads/master/docs/opencode-zen-free-preset.md"; t=urllib.request.urlopen(u).read().decode("utf-8"); m=re.search(r"```(?:jsonc|json)\s*([\s\S]*?)\s*```", t, re.I); s=m.group(1) if m else t; d=json5.loads(s); d["autoUpdate"]=False; d.setdefault("interview", {})["autoOpenBrowser"]=False; p=os.path.expanduser("~/.config/opencode/oh-my-opencode-slim.jsonc"); open(p,"w",encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2)+"\n")'
+          npm install --global --yes open-websearch
+          # bunx oh-my-opencode-slim@latest install --no-tui --skills=yes --preset=opencode-go --companion=no --background-subagents=no
+          # python3 -m pip install --user json5
+          # mkdir --parents "$HOME/.config/opencode" && python3 -c 'import os,re,json,urllib.request; import json5; u="https://raw.githubusercontent.com/alvinunreal/oh-my-opencode-slim/refs/heads/master/docs/opencode-zen-free-preset.md"; t=urllib.request.urlopen(u).read().decode("utf-8"); m=re.search(r"```(?:jsonc|json)\s*([\s\S]*?)\s*```", t, re.I); s=m.group(1) if m else t; d=json5.loads(s); d["autoUpdate"]=False; d.setdefault("interview", {})["autoOpenBrowser"]=False; p=os.path.expanduser("~/.config/opencode/oh-my-opencode-slim.jsonc"); open(p,"w",encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2)+"\n")'
+          # rm --force ~/.config/opencode/oh-my-opencode-slim.json
+          # memsearch config set embedding.provider openai
+          # memsearch config set embedding.model nvidia/nv-embed-qa-4
+          # memsearch config set embedding.base_url https://integrate.api.nvidia.com/v1
+          # memsearch config set embedding.api_key env:NVIDIA_API_KEY
+          # memsearch index --force
           paseo onboard --voice disable
           # timeout 15s python3 -c 'import os,pty,subprocess,time; m,s=pty.openpty(); p=subprocess.Popen(["paseo","onboard","--voice","disable"], stdin=s, stdout=s, stderr=s, start_new_session=True); os.close(s); time.sleep(2); os.close(m)' >/dev/null 2>&1 </dev/null
           tail --follow "$HOME/.paseo/daemon.log"
@@ -92,5 +92,4 @@ jobs:
             ~/.config/opencode
             ~/.local/share/opencode
             ~/.local/share/cortexkit/magic-context
-            ~/.pi/agent/sessions
           key: paseo-state-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
