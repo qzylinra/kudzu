@@ -3,9 +3,8 @@
 final: prev: {
   nix = inputs.nix.packages."${prev.stdenv.hostPlatform.system}".default;
   fast-nix-gc = prev.callPackage ./fast-nix-gc.nix { };
-  opencode-wrapper = prev.callPackage ./opencode-wrapper.nix { };
-  opencode-bin = prev.callPackage ./opencode-bin.nix { };
-  opencode-config = prev.callPackage ./opencode-config.nix { };
+  openinterpreter-wrapper = prev.callPackage ./openinterpreter-wrapper.nix { };
+  openinterpreter-config = prev.callPackage ./openinterpreter-config.nix { };
   opencode = prev.opencode.overrideAttrs (oldAttrs: {
     installPhase =
       prev.lib.replaceStrings
