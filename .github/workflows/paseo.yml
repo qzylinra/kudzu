@@ -44,24 +44,24 @@ jobs:
         with:
           path: |
             ~/.paseo
-            ~/.openinterpreter
+            ~/.factory/sessions
           key: paseo-state-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
           restore-keys: |
             paseo-state-${{ runner.os }}-${{ runner.arch }}-
       - run: |
           rm --force "$HOME/.config/nix/nix.conf"
-          mkdir --parents "$HOME/.paseo" "$HOME/.openinterpreter"
-          curl -fsSL https://www.openinterpreter.com/install | sh
-          nix profile add nixpkgs#openspec .#openinterpreter-wrapper
-          nix build --verbose --print-build-logs --print-out-paths --impure .#openinterpreter-config --out-link /tmp/openinterpreter-config && install -D --mode 0644 /tmp/openinterpreter-config ~/.openinterpreter/config.toml && rm --force /tmp/openinterpreter-config
+          mkdir --parents "$HOME/.paseo"
+          curl -fsSL https://app.factory.ai/cli | sh
+          nix build --verbose --print-build-logs --print-out-paths --impure .#factory-settings --out-link /tmp/factory-settings && install -D --mode 0644 /tmp/factory-settings ~/.factory/settings.json && rm --force /tmp/factory-settings
+          nix build --verbose --print-build-logs --print-out-paths --impure .#factory-mcp --out-link /tmp/factory-mcp && install -D --mode 0644 /tmp/factory-mcp ~/.factory/mcp.json && rm --force /tmp/factory-mcp
           npm install --global --yes @getpaseo/cli
       - run: |
-          npx skills@latest add mattpocock/skills --agent cline --global --yes
-          npx skills@latest add addyosmani/agent-skills --agent cline --global --yes
-          npx skills@latest add Fission-AI/OpenSpec --agent cline --global --yes
-          git clone --depth 1 --single-branch https://github.com/uditgoenka/autoresearch.git /tmp/autoresearch && cp --recursive /tmp/autoresearch/.agents/skills/autoresearch ~/.agents/skills/ && rm --recursive --force /tmp/autoresearch
-          git clone --depth 1 --single-branch https://github.com/PabloNAX/ultracode-skill.git /tmp/ultracode-skill && cp --recursive /tmp/ultracode-skill/ultracode ~/.agents/skills/ && rm --recursive --force /tmp/ultracode-skill
-          mkdir --parents "${HOME}/.agents/skills/ultra-goal" && curl --location "https://raw.githubusercontent.com/Azure99/ultra-goal/main/skills/ultra-goal/SKILL.md" --output "${HOME}/.agents/skills/ultra-goal/SKILL.md"
+          # droid plugin marketplace add https://github.com/Factory-AI/factory-plugins
+          # droid plugin install droid-control@factory-plugins
+          # droid plugin install autoresearch@factory-plugins
+          npx skills@latest add mattpocock/skills --agent droid  --global --yes
+          npx skills@latest add Fission-AI/OpenSpec --agent droid  --global --yes
+          npx skills@latest add addyosmani/agent-skills --agent droid --global --yes
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
           npm install --global --yes open-websearch
           pushd .github/zen
@@ -73,18 +73,15 @@ jobs:
           tail --follow "$HOME/.paseo/daemon.log"
         env:
           GH_TOKEN: ${{ secrets.TOKEN }}
-          CLAUDE_CODE_USE_OPENAI": "1"
-          OPENAI_BASE_URL: "http://127.0.0.1:8787/v1"
-          OPENAI_API_KEY: "sk-key-zen"
-          OPENAI_MODEL: "deepseek-v4-flash-free"
+          FACTORY_DROID_AUTO_UPDATE_ENABLED: "false"
+          FACTORY_AIRGAP_ENABLED: "true"
+          FACTORY_API_KEY: "x"
       - if: always()
-        run: |
-          paseo daemon stop
-          rm --recursive --force ~/.openinterpreter/config.toml ~/.openinterpreter/installation_id ~/.openinterpreter/packages ~/.openinterpreter/shell_snapshots ~/.openinterpreter/skills ~/.openinterpreter/tmp
+        run: paseo daemon stop
       - if: always()
         uses: actions/cache/save@main
         with:
           path: |
             ~/.paseo
-            ~/.openinterpreter
+            ~/.factory/sessions
           key: paseo-state-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}

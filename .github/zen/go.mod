@@ -1,3 +1,3 @@
 module zen-free
 
-go 1.24
+go 1.23

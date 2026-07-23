@@ -3,19 +3,8 @@
 final: prev: {
   nix = inputs.nix.packages."${prev.stdenv.hostPlatform.system}".default;
   fast-nix-gc = prev.callPackage ./fast-nix-gc.nix { };
-  openinterpreter-wrapper = prev.callPackage ./openinterpreter-wrapper.nix { };
-  openinterpreter-config = prev.callPackage ./openinterpreter-config.nix { };
-  opencode = prev.opencode.overrideAttrs (oldAttrs: {
-    installPhase =
-      prev.lib.replaceStrings
-        [
-          "wrapProgram $out/bin/opencode"
-        ]
-        [
-          "wrapProgram $out/bin/opencode --set OPENCODE_DISABLE_DEFAULT_PLUGINS true --set OPENCODE_DISABLE_LSP_DOWNLOAD true"
-        ]
-        oldAttrs.installPhase;
-  });
+  factory-settings = prev.callPackage ./factory-settings.nix { };
+  factory-mcp = prev.callPackage ./factory-mcp.nix { };
   rfv = prev.writeShellScriptBin "rfv" (
     builtins.readFile (
       prev.replaceVars ./rfv {
