@@ -1,0 +1,14 @@
+{
+  "name": "opencode-zen-proxy",
+  "version": "1.0.0",
+  "description": "Local proxy for opencode-zen API with model metadata enhancement",
+  "type": "module",
+  "main": "proxy.mjs",
+  "bin": {
+    "opencode-zen-proxy": "./proxy.mjs"
+  },
+  "dependencies": {
+    "comment-json": "^4.2.3",
+    "@iarna/toml": "^3.0.0"
+  }
+}
