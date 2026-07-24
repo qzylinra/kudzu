@@ -122,7 +122,8 @@ function detectAgent(ua) {
   if (!ua) return "unknown";
   const lower = ua.toLowerCase();
   if (lower.startsWith("dirac")) return "dirac";
-  if (lower.includes("reasonix") || lower.includes("deepseek-reasonix")) return "reasonix";
+  // Reasonix uses Go HTTP client or OpenAI SDK or its own User-Agent
+  if (lower.includes("go-http-client") || lower.includes("reasonix") || lower.includes("deepseek-reasonix") || lower.includes("openai-js") || lower.includes("openai_node")) return "reasonix";
   if (lower.includes("droid") || lower.includes("factory")) return "droid";
   return "unknown";
 }
@@ -251,7 +252,7 @@ function serveModelList(req, res) {
 
 // ─── Logging ─────────────────────────────────────────────────────────
 
-function logRequest(agent, method, url, parsedBody) {
+function logRequest(agent, method, url, parsedBody, allHeaders) {
   const ts = new Date().toISOString().slice(11, 19);
   const model = parsedBody?.model || "?";
   const msgCount = parsedBody?.messages?.length || 0;
@@ -262,14 +263,26 @@ function logRequest(agent, method, url, parsedBody) {
   const tokens = parsedBody?.max_tokens || parsedBody?.max_completion_tokens || "—";
 
   console.log(`📥 ${ts} [${agent}] ${method} ${url} → model=${model} msgs=${msgCount} ${stream} tokens=${tokens} reasoning=${reasoning}${hasTools ? ` tools=${toolCount}` : ""}`);
+  // Log agent-specific headers
+  const interesting = ["user-agent","authorization","x-opencode-session","x-opencode-project","x-opencode-request","x-opencode-client","content-type","accept","x-api-key","x-reasonix-session","x-factory-api-key"];
+  const hdrLog = {};
+  for (const h of interesting) { if (allHeaders[h]) hdrLog[h] = allHeaders[h]; }
+  console.log(`   headers: ${JSON.stringify(hdrLog)}`);
+  // Log session-related body fields
+  const sessionFields = {};
+  for (const k of Object.keys(parsedBody || {})) {
+    if (k.includes("session") || k.includes("thread") || k.includes("conversation") || k.includes("context") || k.includes("metadata")) {
+      sessionFields[k] = typeof parsedBody[k] === "object" ? "[Object]" : parsedBody[k];
+    }
+  }
+  if (Object.keys(sessionFields).length > 0) console.log(`   session: ${JSON.stringify(sessionFields)}`);
 }
 
 // ─── Body transformation (agent-aware) ──────────────────────────────
 
 function transformBody(parsed, agent) {
-  // dirac sends 17 tools per request — upstream free models don't support
-  // function calling, so strip them to avoid errors.
-  if (agent === "dirac" && parsed.tools) {
+  // Strip function-calling tools — upstream free models don't support them
+  if (parsed.tools) {
     delete parsed.tools;
     delete parsed.tool_choice;
     delete parsed.parallel_tool_calls;
@@ -277,14 +290,27 @@ function transformBody(parsed, agent) {
   return parsed;
 }
 
+// Transform request headers per agent before forwarding to upstream
+function transformHeaders(agent, headers) {
+  // 1. Delete incoming host (proxy uses its own)
+  delete headers.host;
+  // 2. dirac sends Authorization: Bearer public — strip it, opencodeHeaders() injects the real one
+  delete headers.authorization;
+  // 3. Delete content-length (recalculated after body transform)
+  delete headers["content-length"];
+  // 4. Add opencode-compatible headers
+  Object.assign(headers, opencodeHeaders());
+  return headers;
+}
+
 // ─── Proxy to upstream ──────────────────────────────────────────────
 
 function proxyToUpstream(req, res) {
   const agent = detectAgent(req.headers["user-agent"]);
 
-  // Strip incoming host, add opencode headers
-  const headers = { ...req.headers, ...opencodeHeaders() };
-  delete headers.host;
+  // Transform headers per agent (strip auth, inject opencode headers)
+  const headers = { ...req.headers };
+  transformHeaders(agent, headers);
 
   const isChat = req.url.includes("/chat/completions") || req.url.includes("/completions");
 
@@ -320,7 +346,7 @@ function proxyToUpstream(req, res) {
     if (isChat && rawBody) {
       try {
         const parsed = JSON.parse(rawBody);
-        logRequest(agent, req.method, req.url, parsed);
+        logRequest(agent, req.method, req.url, parsed, req.headers);
         transformBody(parsed, agent);
         finalBody = JSON.stringify(parsed);
         // Recalculate Content-Length after body transformation
