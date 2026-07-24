@@ -5,6 +5,9 @@
 // headers, enriches model metadata via models.dev, and forwards
 // requests to the upstream opencode API.
 //
+// Agent-aware: detects dirac / Reasonix / Droid from User-Agent
+// and adapts headers + request body accordingly.
+//
 // Zero-dep proxy core.  Config writing uses:
 //   comment-json  (Droid  — preserves comments in settings.json)
 //   @iarna/toml   (Reasonix — proper TOML array-of-tables)
@@ -103,8 +106,6 @@ function deriveProjectId() {
 
 let upstreamModelIds = [];
 let upstreamModelsDev = {};
-let lastFetch = 0;
-let modelListPromise = null;
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -114,6 +115,17 @@ const SESSION_ID = "ses_" + descendingId();
 const PROJECT_ID = "prj_" + deriveProjectId();
 const MODEL_LIST_CACHE = 3600_000; // 1 hour
 const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+// ─── Agent detection ────────────────────────────────────────────────
+
+function detectAgent(ua) {
+  if (!ua) return "unknown";
+  const lower = ua.toLowerCase();
+  if (lower.startsWith("dirac")) return "dirac";
+  if (lower.includes("reasonix") || lower.includes("deepseek-reasonix")) return "reasonix";
+  if (lower.includes("droid") || lower.includes("factory")) return "droid";
+  return "unknown";
+}
 
 // ─── opencode-compatible request headers ─────────────────────────────
 
@@ -133,7 +145,7 @@ function opencodeHeaders() {
 async function httpGet(url) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith("https") ? https : http;
-    mod.get(url, { timeout: 15_000 }, (res) => {
+    const req = mod.get(url, { timeout: 15_000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return httpGet(res.headers.location).then(resolve, reject);
       }
@@ -218,6 +230,7 @@ function buildModelRecord(id) {
 // ─── Model list endpoint (GET /v1/models) ───────────────────────────
 
 function serveModelList(req, res) {
+  const agent = detectAgent(req.headers["user-agent"]);
   const data = upstreamModelIds.filter(isFreeModelId).map((id) => {
     const r = buildModelRecord(id);
     return {
@@ -231,15 +244,49 @@ function serveModelList(req, res) {
       supported_input: r.inputTypes,
     };
   });
+  console.log(`📥 Models: ${agent} requested ${data.length} free models`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ object: "list", data }));
+}
+
+// ─── Logging ─────────────────────────────────────────────────────────
+
+function logRequest(agent, method, url, parsedBody) {
+  const ts = new Date().toISOString().slice(11, 19);
+  const model = parsedBody?.model || "?";
+  const msgCount = parsedBody?.messages?.length || 0;
+  const hasTools = !!parsedBody?.tools;
+  const toolCount = parsedBody?.tools?.length || 0;
+  const reasoning = parsedBody?.reasoning_effort || parsedBody?.thinking?.type || "—";
+  const stream = parsedBody?.stream ? "stream" : "sync";
+  const tokens = parsedBody?.max_tokens || parsedBody?.max_completion_tokens || "—";
+
+  console.log(`📥 ${ts} [${agent}] ${method} ${url} → model=${model} msgs=${msgCount} ${stream} tokens=${tokens} reasoning=${reasoning}${hasTools ? ` tools=${toolCount}` : ""}`);
+}
+
+// ─── Body transformation (agent-aware) ──────────────────────────────
+
+function transformBody(parsed, agent) {
+  // dirac sends 17 tools per request — upstream free models don't support
+  // function calling, so strip them to avoid errors.
+  if (agent === "dirac" && parsed.tools) {
+    delete parsed.tools;
+    delete parsed.tool_choice;
+    delete parsed.parallel_tool_calls;
+  }
+  return parsed;
 }
 
 // ─── Proxy to upstream ──────────────────────────────────────────────
 
 function proxyToUpstream(req, res) {
+  const agent = detectAgent(req.headers["user-agent"]);
+
+  // Strip incoming host, add opencode headers
   const headers = { ...req.headers, ...opencodeHeaders() };
   delete headers.host;
+
+  const isChat = req.url.includes("/chat/completions") || req.url.includes("/completions");
 
   const opts = {
     hostname: UPSTREAM_URL.hostname,
@@ -250,19 +297,53 @@ function proxyToUpstream(req, res) {
     timeout: 300_000,
   };
 
-  const proxyReq = https.request(opts, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    proxyRes.pipe(res);
-  });
-
-  proxyReq.on("error", (e) => {
-    if (!res.headersSent) {
-      res.writeHead(502, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: { message: "Upstream error: " + e.message, type: "proxy_error" } }));
+  // Capture body for logging + transformation
+  const MAX_BODY = 10 * 1024 * 1024; // 10MB limit
+  let bodySize = 0;
+  const chunks = [];
+  req.on("data", (c) => {
+    bodySize += c.length;
+    if (bodySize > MAX_BODY) {
+      req.destroy();
+      if (!res.headersSent) {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Request body too large (max 10MB)", type: "proxy_error" } }));
+      }
+      return;
     }
+    chunks.push(c);
   });
+  req.on("end", () => {
+    const rawBody = Buffer.concat(chunks).toString();
+    let finalBody = rawBody;
 
-  req.pipe(proxyReq);
+    if (isChat && rawBody) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        logRequest(agent, req.method, req.url, parsed);
+        transformBody(parsed, agent);
+        finalBody = JSON.stringify(parsed);
+        // Recalculate Content-Length after body transformation
+        delete headers["content-length"];
+        headers["content-length"] = Buffer.byteLength(finalBody);
+      } catch { /* pass through raw */ }
+    }
+
+    const proxyReq = https.request(opts, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on("error", (e) => {
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Upstream error: " + e.message, type: "proxy_error" } }));
+      }
+    });
+
+    proxyReq.write(finalBody);
+    proxyReq.end();
+  });
 }
 
 // ─── HTTP server ─────────────────────────────────────────────────────
@@ -310,13 +391,11 @@ function setupDroid() {
   if (!existing.customModels) existing.customModels = [];
 
   // Remove our previously-injected entries (by marker)
-  const marker = "__opencode_zen_proxy__";
-  const models = existing.customModels.filter((m) => !m[marker]);
+  const models = existing.customModels.filter((m) => !m.__opencode_zen_proxy__);
 
   // Add free models
   for (const id of upstreamModelIds.filter(isFreeModelId)) {
     const info = upstreamModelsDev[id] || {};
-    const ctx = info.limit?.context ?? 128_000;
     models.push({
       __opencode_zen_proxy__: true,
       model: id,
@@ -355,6 +434,7 @@ function setupReasonix() {
 
   // Add free models as separate [[providers]] entries (one model per provider)
   for (const id of upstreamModelIds.filter(isFreeModelId)) {
+    const info = upstreamModelsDev[id] || {};
     existing.providers.push({
       _opencode_zen_proxy: true,
       name: id,
@@ -362,7 +442,7 @@ function setupReasonix() {
       base_url: `http://127.0.0.1:${CLI.port}/v1`,
       api_key: "public",
       model: id,
-      context_window: upstreamModelsDev[id]?.limit?.context ?? 128_000,
+      context_window: info.limit?.context ?? 128_000,
     });
   }
 
@@ -394,8 +474,8 @@ function setupDirac() {
 // ─── Main ────────────────────────────────────────────────────────────
 
 async function main() {
-  if (CLI.setup || true) {
-    // Always fetch upstream data (for both setup and runtime)
+  // Always fetch upstream data (for both setup and runtime)
+  {
     console.log("📡 Fetching upstream model list...");
     await Promise.all([fetchUpstreamModelIds(), fetchModelsDev()]);
     console.log(`   Found ${upstreamModelIds.length} upstream models, ${upstreamModelIds.filter(isFreeModelId).length} free`);
@@ -406,12 +486,21 @@ async function main() {
       if (CLI.agents.includes("reasonix")) setupReasonix();
       if (CLI.agents.includes("dirac")) setupDirac();
       console.log("\n✅ Done. Config files written.");
-      if (CLI.setup) return; // --setup only, don't start server
+      return; // --setup only, don't start server
     }
   }
 
   // Start server
   const server = http.createServer(handleRequest);
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log("\n⏹️  Shutting down...");
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 5000); // force exit after 5s
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
   server.listen(CLI.port, "127.0.0.1", () => {
     console.log(`\n🚀 opencode-zen proxy listening on http://127.0.0.1:${CLI.port}`);
     console.log(`   Session: ${SESSION_ID}`);
