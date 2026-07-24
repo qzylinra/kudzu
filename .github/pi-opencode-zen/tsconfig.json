@@ -1,6 +1,6 @@
 {
-	"compilerOptions": {
-		"strict": true,
-		"skipLibCheck": true
-	}
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true
+  }
 }

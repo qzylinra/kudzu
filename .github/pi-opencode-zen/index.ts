@@ -99,7 +99,7 @@ function deriveProjectId(dir: string): string {
 	const randomPart = Array.from({ length: RANDOM_PART_LENGTH }, (_, i) =>
 		RANDOM_CHARS[hash[6 + i] % 62],
 	).join("");
-	return timePart + randomPart;
+	return "prj_" + timePart + randomPart;
 }
 
 let cachedProjectId: string | undefined;
@@ -168,7 +168,6 @@ type ModelRecord = ProviderModelConfig & {
 };
 
 let bootstrapPromise: Promise<BootstrapState> | undefined;
-let bootstrapAttempts = 0;
 const MAX_BOOTSTRAP_ATTEMPTS = 3;
 
 /**
@@ -414,7 +413,6 @@ async function loadBootstrapState(): Promise<BootstrapState> {
 					.filter((id) => !isDeprecated(modelsDevInfo?.[id]));
 
 				if (modelIds.length > 0) {
-					bootstrapAttempts = attempt + 1;
 					return { modelIds, modelsDevInfo: modelsDevInfo ?? {} };
 				}
 			} catch {
@@ -422,7 +420,6 @@ async function loadBootstrapState(): Promise<BootstrapState> {
 			}
 			await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
 		}
-		bootstrapAttempts = MAX_BOOTSTRAP_ATTEMPTS;
 		return { modelIds: [], modelsDevInfo: {} };
 	})();
 
